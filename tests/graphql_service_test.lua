@@ -5,51 +5,37 @@
 --- them filled.
 ---
 --- Run from the archetype repo root (uses ./prova.toml):   prova
---- requires archetect + docker + mvn + java (JDK 21); skips cleanly without them.
+--- requires docker + mvn + java (JDK 21); skips cleanly without them.
 ---
 --- NOTE (why this matters): the archetype today is a SCAFFOLD - the schema exposes only a `health`
 --- query and its persistence module ships a single empty Flyway migration. prova *booting* the
 --- service and driving GraphQL against a real database is what proves "renders + compiles" is backed
 --- by a service that starts, connects, and serves. As the archetype grows real CRUD, the assertions
 --- below graduate from `{ health }` to real persisted state (mutation -> row -> query).
----
---- Rendering shells out to the `archetect` CLI (one fresh process per render) rather than the
---- in-process `archetect.render`, which can only render once per process.
 
-local SRC         = "."   -- shell.run inherits prova's cwd (the repo root), where the archetype lives
-local PROJECT_DIR = "example-service"
-local BOOT_JAR    = "example-service-server/target/example-service-server-1.0.0-SNAPSHOT.jar"
+local postgres = require("postgres")
+local mysql    = require("mysql")
 
-local function answers_yaml(persistence)
-  return table.concat({
-    'author_name: "Test Author"',
-    'author_email: "test@example.com"',
-    'org_name: "acme"',
-    'solution_name: "platform"',
-    'prefix_name: "Example"',
-    'suffix_name: "Service"',
-    'group_id: "acme.platform"',
-    'artifactory_host: "acme.jfrog.io"',
-    'image_registry: "ghcr.io/acme"',
-    'persistence: "' .. persistence .. '"',
-  }, "\n") .. "\n"
-end
+local SRC = "."
+local BOOT_JAR = "example-service-server/target/example-service-server-1.0.0-SNAPSHOT.jar"
 
-local function render(ctx, persistence)
-  local out     = ctx:tempdir()
-  local answers = out .. "/answers.yaml"
-  fs.write(answers, answers_yaml(persistence))
-  shell.run("archetect render " .. SRC .. " " .. out .. "/rendered -A " .. answers .. " -D --headless",
-    { timeout = "180s", check = true })
-  return out .. "/rendered/" .. PROJECT_DIR
-end
+local BASE_ANSWERS = {
+  author_name      = "Test Author",
+  author_email     = "test@example.com",
+  org_name         = "acme",
+  solution_name    = "platform",
+  prefix_name      = "Example",
+  suffix_name      = "Service",
+  group_id         = "acme.platform",
+  artifactory_host = "acme.jfrog.io",
+  image_registry   = "ghcr.io/acme",
+}
 
--- Build the reactor, then repackage the server into a runnable boot jar (see the REST suite's notes
--- on why install alone is a thin jar).
-local function build(root)
-  shell.run("mvn -q -B -DskipTests install", { cwd = root, timeout = "900s", check = true })
-  shell.run("mvn -q -B -o -pl example-service-server -DskipTests package spring-boot:repackage",
-    { cwd = root, timeout = "900s", check = true })
+local function answers_with(extra)
+  local out = {}
+  for k, v in pairs(BASE_ANSWERS) do out[k] = v end
+  for k, v in pairs(extra) do out[k] = v end
+  return out
 end
 
 local PERSISTENCE_FILES = {
@@ -74,67 +60,57 @@ local BASE_FILES = {
   ".github/workflows/build.yaml",
 }
 
-local function check_layout(t, root, present, absent)
-  t:expect_all(function()
-    for _, f in ipairs(present) do
-      t:expect(fs.exists(root .. "/" .. f), f):is_true()
-    end
-    for _, f in ipairs(absent or {}) do
-      t:expect(fs.exists(root .. "/" .. f), f .. " (should be absent)"):is_false()
-    end
-  end)
-end
-
-local function check_yaml_manifests(t, root)
-  local matches = fs.glob(root, ".platform/kubernetes/**/*.yaml")
-  t:expect(#matches, "kubernetes manifests"):never():equals(0)
-  for _, path in ipairs(matches) do
-    yaml.parse_all(fs.read(path))
-  end
+-- Build the reactor, then repackage the server into a runnable boot jar (see the REST suite's notes
+-- on why install alone is a thin jar).
+local function build(dir)
+  shell.run("mvn -q -B -DskipTests install", { cwd = dir, timeout = "900s", check = true })
+  shell.run("mvn -q -B -o -pl example-service-server -DskipTests package spring-boot:repackage",
+    { cwd = dir, timeout = "900s", check = true })
 end
 
 local VARIANTS = {
-  { persistence = "PostgreSQL", recipe = db.postgres, db_port = 5432 },
-  { persistence = "MySQL",      recipe = db.mysql,    db_port = 3306 },
+  { persistence = "PostgreSQL", db = postgres },
+  { persistence = "MySQL",      db = mysql },
 }
 
 for _, v in ipairs(VARIANTS) do
   local label = "java-graphql[" .. v.persistence .. "]"
 
   local project = prova.fixture(label .. ":project", Scope.File, function(ctx)
-    return render(ctx, v.persistence)
+    return archetect.render{
+      source = SRC,
+      answers = answers_with{ persistence = v.persistence },
+      destination = ctx:tempdir(),
+      defaults = true,
+    }
   end)
 
-  prova.group(label, { requires = { "archetect" } }, function(g)
-    g:test("layout includes the persistence module", function(t)
-      local root = t:use(project)
-      local present = {}
-      for _, f in ipairs(BASE_FILES) do present[#present + 1] = f end
-      for _, f in ipairs(PERSISTENCE_FILES) do present[#present + 1] = f end
-      check_layout(t, root, present)
-    end)
-
-    g:test("platform kubernetes manifests parse", function(t)
-      check_yaml_manifests(t, t:use(project))
-    end)
-  end)
+  local expected = {}
+  for _, f in ipairs(BASE_FILES) do expected[#expected + 1] = f end
+  for _, f in ipairs(PERSISTENCE_FILES) do expected[#expected + 1] = f end
+  archetect.verify(project, {
+    name = label,
+    project_dir = "example-service",
+    expected_files = expected,
+    yaml_globs = { ".platform/kubernetes/**/*.yaml" },
+  })
 
   local service = prova.fixture(label .. ":service", Scope.File, function(ctx)
-    local root = ctx:use(project)
-    local d    = v.recipe(ctx, { database = "prova" })
+    local root = ctx:use(project):dir("example-service")
+    local db = v.db.container(ctx)
 
-    build(root)
+    build(root.path)
 
     -- GraphQL is served on the service port at /graphql; health on the management port.
     local port, mgmt = net.free_port(), net.free_port()
     ctx:manage(shell.spawn("java -jar " .. BOOT_JAR, {
-      cwd = root,
+      cwd = root.path,
       env = {
-        SERVER_PORT            = tostring(port),
-        MANAGEMENT_PORT        = tostring(mgmt),
+        SERVER_PORT            = port,
+        MANAGEMENT_PORT        = mgmt,
         SPRING_PROFILES_ACTIVE = "persistence",
-        DB_HOST                = "127.0.0.1",
-        DB_PORT                = tostring(d.container:host_port(v.db_port)),
+        DB_HOST                = db.host,
+        DB_PORT                = db.port,
         DB_DBNAME              = "prova",
         DB_USERNAME            = "prova",
         DB_PASSWORD            = "prova",
@@ -144,11 +120,10 @@ for _, v in ipairs(VARIANTS) do
     local readiness = "http://127.0.0.1:" .. mgmt .. "/health/readiness"
     http.wait_for(readiness, { status = 200, timeout = "180s", every = "1s" })
     local api = graphql.client{ url = "http://127.0.0.1:" .. port .. "/graphql" }
-    return { readiness = readiness, api = api, conn = d.conn }
+    return { readiness = readiness, api = api, db = db.client }
   end)
 
-  prova.group(label .. " boots against " .. v.persistence,
-    { requires = { "archetect", "docker", "mvn", "java" } }, function(g)
+  prova.group(label .. " boots against " .. v.persistence, { requires = { "docker", "mvn", "java" } }, function(g)
     g:test("readiness reports UP", function(t)
       local svc = t:use(service)
       local res = http.get(svc.readiness)
@@ -163,30 +138,21 @@ for _, v in ipairs(VARIANTS) do
 
     g:test("Flyway migrated the real " .. v.persistence .. " database", function(t)
       local svc = t:use(service)
-      t:expect(svc.conn:query_value("SELECT count(*) FROM flyway_schema_history"),
+      t:expect(svc.db:query_value("SELECT count(*) FROM flyway_schema_history"),
         "applied migrations"):gte(1)
     end)
   end)
 end
 
 -- The hollow rendering stays hollow: no persistence module, no scaffold files - and it still builds.
-local none = prova.fixture("java-graphql[None]:project", Scope.File, function(ctx)
-  return render(ctx, "None")
-end)
-
-prova.group("java-graphql[None]", { requires = { "archetect" } }, function(g)
-  g:test("layout omits the persistence module", function(t)
-    local root = t:use(none)
-    check_layout(t, root, BASE_FILES, PERSISTENCE_FILES)
-  end)
-
-  g:test("platform kubernetes manifests parse", function(t)
-    check_yaml_manifests(t, t:use(none))
-  end)
-
-  g:test("builds", { requires = { "archetect", "mvn", "java" }, timeout = "900s" }, function(t)
-    local root = t:use(none)
-    local r = shell.run("mvn -q -B -DskipTests install", { cwd = root, timeout = "900s" })
-    t:expect(r.code, "mvn install"):equals(0)
-  end)
-end)
+archetect.verify{
+  name = "java-graphql[None]",
+  source = SRC,
+  answers = answers_with{ persistence = "None" },
+  project_dir = "example-service",
+  expected_files = BASE_FILES,
+  absent_files = PERSISTENCE_FILES,
+  yaml_globs = { ".platform/kubernetes/**/*.yaml" },
+  requires = { "mvn" },
+  build_steps = { "mvn -q -B -DskipTests install" },
+}
