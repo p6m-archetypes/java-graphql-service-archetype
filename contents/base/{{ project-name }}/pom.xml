@@ -102,6 +102,9 @@
                     <version>${maven-compiler-plugin.version}</version>
                     <configuration>
                         <release>${java.version}</release>
+                        <!-- Spring resolves handler parameter names (@Argument, @PathVariable)
+                             reflectively. -->
+                        <parameters>true</parameters>
                     </configuration>
                 </plugin>
                 <plugin>
