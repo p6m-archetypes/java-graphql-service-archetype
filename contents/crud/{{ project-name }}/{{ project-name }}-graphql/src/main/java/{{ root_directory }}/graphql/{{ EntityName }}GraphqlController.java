@@ -1,6 +1,6 @@
 package {{ root_package }}.graphql;
 
-import {{ group_id }}.persistence.{{ EntityName }};
+import {{ group_id }}.persistence.{{ EntityName }}Entity;
 import {{ group_id }}.persistence.{{ EntityName }}Repository;
 
 import java.util.List;
@@ -27,7 +27,7 @@ public class {{ EntityName }}GraphqlController {
         this.repository = repository;
     }
 
-    private static {{ EntityName }}View toView({{ EntityName }} item) {
+    private static {{ EntityName }}View toView({{ EntityName }}Entity item) {
         return new {{ EntityName }}View(item.getId(), item.getDisplayName());
     }
 
@@ -43,7 +43,7 @@ public class {{ EntityName }}GraphqlController {
 
     @MutationMapping
     public {{ EntityName }}View create{{ EntityName }}(@Argument("displayName") String displayName) {
-        return toView(repository.save(new {{ EntityName }}(displayName)));
+        return toView(repository.save(new {{ EntityName }}Entity(displayName)));
     }
 
     @MutationMapping
