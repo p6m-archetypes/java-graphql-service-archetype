@@ -1,0 +1,17 @@
+# The standard API surface (p6m standards S2): entity-named type, prefix-free query fields,
+# create/update/delete mutations — identical on the wire across every p6m language.
+type {{ EntityName }} {
+    id: ID!
+    displayName: String!
+}
+
+type Query {
+    {{ entityName }}(id: ID!): {{ EntityName }}
+    {{ entityName }}s: [{{ EntityName }}!]!
+}
+
+type Mutation {
+    create{{ EntityName }}(displayName: String!): {{ EntityName }}!
+    update{{ EntityName }}(id: ID!, displayName: String!): {{ EntityName }}
+    delete{{ EntityName }}(id: ID!): Boolean!
+}

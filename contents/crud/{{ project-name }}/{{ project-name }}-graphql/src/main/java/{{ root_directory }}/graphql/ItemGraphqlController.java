@@ -32,22 +32,22 @@ public class ItemGraphqlController {
     }
 
     @QueryMapping
-    public ItemView {{ prefixName }}(@Argument("id") String id) {
+    public ItemView {{ entityName }}(@Argument("id") String id) {
         return repository.findById(id).map(ItemGraphqlController::toView).orElse(null);
     }
 
     @QueryMapping
-    public List<ItemView> {{ prefixName }}s() {
+    public List<ItemView> {{ entityName }}s() {
         return repository.findAll().stream().map(ItemGraphqlController::toView).toList();
     }
 
     @MutationMapping
-    public ItemView create{{ PrefixName }}(@Argument("displayName") String displayName) {
+    public ItemView create{{ EntityName }}(@Argument("displayName") String displayName) {
         return toView(repository.save(new Item(displayName)));
     }
 
     @MutationMapping
-    public ItemView update{{ PrefixName }}(@Argument("id") String id, @Argument("displayName") String displayName) {
+    public ItemView update{{ EntityName }}(@Argument("id") String id, @Argument("displayName") String displayName) {
         return repository.findById(id)
                 .map(item -> {
                     item.setDisplayName(displayName);
@@ -57,7 +57,7 @@ public class ItemGraphqlController {
     }
 
     @MutationMapping
-    public Boolean delete{{ PrefixName }}(@Argument("id") String id) {
+    public Boolean delete{{ EntityName }}(@Argument("id") String id) {
         if (!repository.existsById(id)) {
             return false;
         }
