@@ -1,7 +1,7 @@
 package {{ root_package }}.graphql;
 
-import {{ group_id }}.persistence.Item;
-import {{ group_id }}.persistence.ItemRepository;
+import {{ group_id }}.persistence.{{ EntityName }};
+import {{ group_id }}.persistence.{{ EntityName }}Repository;
 
 import java.util.List;
 
@@ -16,38 +16,38 @@ import org.springframework.stereotype.Controller;
  * unknown ids resolve to {@code null} (queries/update) or {@code false} (delete).
  */
 @Controller
-public class ItemGraphqlController {
+public class {{ EntityName }}GraphqlController {
 
-    public record ItemView(String id, String displayName) {
+    public record {{ EntityName }}View(String id, String displayName) {
     }
 
-    private final ItemRepository repository;
+    private final {{ EntityName }}Repository repository;
 
-    public ItemGraphqlController(ItemRepository repository) {
+    public {{ EntityName }}GraphqlController({{ EntityName }}Repository repository) {
         this.repository = repository;
     }
 
-    private static ItemView toView(Item item) {
-        return new ItemView(item.getId(), item.getDisplayName());
+    private static {{ EntityName }}View toView({{ EntityName }} item) {
+        return new {{ EntityName }}View(item.getId(), item.getDisplayName());
     }
 
     @QueryMapping
-    public ItemView {{ entityName }}(@Argument("id") String id) {
-        return repository.findById(id).map(ItemGraphqlController::toView).orElse(null);
+    public {{ EntityName }}View {{ entityName }}(@Argument("id") String id) {
+        return repository.findById(id).map({{ EntityName }}GraphqlController::toView).orElse(null);
     }
 
     @QueryMapping
-    public List<ItemView> {{ entityName }}s() {
-        return repository.findAll().stream().map(ItemGraphqlController::toView).toList();
+    public List<{{ EntityName }}View> {{ entityName }}s() {
+        return repository.findAll().stream().map({{ EntityName }}GraphqlController::toView).toList();
     }
 
     @MutationMapping
-    public ItemView create{{ EntityName }}(@Argument("displayName") String displayName) {
-        return toView(repository.save(new Item(displayName)));
+    public {{ EntityName }}View create{{ EntityName }}(@Argument("displayName") String displayName) {
+        return toView(repository.save(new {{ EntityName }}(displayName)));
     }
 
     @MutationMapping
-    public ItemView update{{ EntityName }}(@Argument("id") String id, @Argument("displayName") String displayName) {
+    public {{ EntityName }}View update{{ EntityName }}(@Argument("id") String id, @Argument("displayName") String displayName) {
         return repository.findById(id)
                 .map(item -> {
                     item.setDisplayName(displayName);
