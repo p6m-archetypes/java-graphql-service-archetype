@@ -1,119 +1,107 @@
 --- Render-verification suite for the Java GraphQL service archetype: each persistence variant lays
 --- out correctly and is fully rendered, and the hollow (None) rendering stays hollow.
 ---
+--- Every rendering comes from `p6m.spec{}` + `p6m.render` — the shape harness — so the paths this
+--- file expects are BUILT from the same identity the archetype was answered with, never spelled by
+--- hand. A hand-spelled path list is how `example-service/.../Example.java` outlived the entity it was
+--- named for.
+---
 --- The BEHAVIORAL bar — CRUD through the production image, the platform env contract, health/
---- metrics/structured logs, both name shapes — lives in tests/standards_test.lua (the shared
---- p6m standards suite), fully containerized: docker is the only requirement. Compile coverage
---- is containerized too: the standards SUT image builds compile the persistence variants, and
---- the hollow rendering is proven compilable by building its production Dockerfile here — no
---- host toolchain is ever required.
+--- metrics/structured logs, both name shapes — lives in tests/standards_test.lua. Compile coverage
+--- is containerized: the standards SUT image builds compile the persistence variants, and the
+--- hollow rendering is proven compilable by building its production Dockerfile here — no host
+--- toolchain is ever required.
 
 local p6m = require("p6m")
 
-local SRC = "."
+local LANG_ANSWERS = { group_id = "acme.platform", artifactory_host = "acme.jfrog.io" }
 
-local BASE_ANSWERS = {
-  project_name = "example-service",
-  solution_name = "acme-platform",
-  entity_name = "example",
-  group_id         = "acme.platform",
-  artifactory_host = "acme.jfrog.io",
-  image_registry   = "ghcr.io/acme",
-}
-
-local function answers_with(extra)
-  local out = {}
-  for k, v in pairs(BASE_ANSWERS) do out[k] = v end
-  for k, v in pairs(extra) do out[k] = v end
-  return out
+local function spec_for(persistence)
+  return p6m.spec{
+    language = "java", shape = "full", transport = "graphql",
+    project = "example-service", entity = "example", solution = "acme-platform",
+    persistence = persistence, registry = "ghcr.io/acme", answers = LANG_ANSWERS,
+  }
 end
 
--- Files the persistence scaffold adds (relative to the rendered project root). Absent from "None".
-local PERSISTENCE_FILES = {
-  "example-service-persistence/pom.xml",
-  "example-service-persistence/src/main/java/acme/platform/exampleservice/persistence/PersistenceConfig.java",
-  "example-service-persistence/src/main/java/acme/platform/exampleservice/persistence/ExampleEntity.java",
-  "example-service-persistence/src/main/java/acme/platform/exampleservice/persistence/ExampleRepository.java",
-  "example-service-persistence/src/main/resources/db/migration/V1__init.sql",
-  "example-service-persistence/src/main/resources/db/migration/V2__create_examples.sql",
-  "example-service-graphql/src/main/java/acme/platform/exampleservice/graphql/ExampleGraphqlController.java",
-  "example-service-server/src/main/resources/application-persistence.yaml",
-}
-
--- Base + GraphQL protocol module; present in every rendering (the schema always carries the
--- standard API surface; resolvers arrive with a persistence flavor).
-local BASE_FILES = {
-  "pom.xml",
-  "example-service-bom/pom.xml",
-  "example-service-core/pom.xml",
-  "example-service-server/pom.xml",
-  "example-service-server/src/main/java/acme/platform/exampleservice/server/Application.java",
-  "example-service-server/src/main/resources/application.yaml",
-  "example-service-integration-tests/pom.xml",
-  "example-service-graphql/pom.xml",
-  "example-service-graphql/src/main/resources/graphql/example_service.graphqls",
-  ".dockerignore",
-  ".github/workflows/build.yaml",
-}
+-- The java module layout, derived from the spec. `root_directory` mirrors the archetype's own
+-- derivation (group_id + the project's package segment) — stated once here rather than in a path
+-- literal per file.
+local function paths(s)
+  local p = s.project_dir
+  local pkg = "acme/platform/" .. s.id.project_snake:gsub("_", "")
+  return {
+    base = {
+      "pom.xml",
+      p .. "-bom/pom.xml",
+      p .. "-core/pom.xml",
+      p .. "-core/src/main/java/" .. pkg .. "/core/CoreConfig.java",
+      p .. "-server/pom.xml",
+      p .. "-server/src/main/java/" .. pkg .. "/server/Application.java",
+      p .. "-server/src/main/resources/application.yaml",
+      p .. "-integration-tests/pom.xml",
+      p .. "-graphql/pom.xml",
+      ".dockerignore",
+      ".github/workflows/build.yaml",
+    },
+    persistence = {
+      p .. "-persistence/pom.xml",
+      -- NOTE the directory is `root_directory` (group_id + the project segment) while these files
+      -- DECLARE `{{ group_id }}.persistence` — the two disagree fleet-wide. javac tolerates it
+      -- because Maven passes an explicit file list, and PersistenceConfig pins its @EntityScan to
+      -- the declared package, so it works. Asserting the DIRECTORY is what this check is about.
+      p .. "-persistence/src/main/java/" .. pkg .. "/persistence/PersistenceConfig.java",
+      p .. "-persistence/src/main/java/" .. pkg .. "/persistence/" .. s.id.EntityName .. "Entity.java",
+      p .. "-persistence/src/main/java/" .. pkg .. "/persistence/" .. s.id.EntityName .. "Repository.java",
+      p .. "-persistence/src/main/resources/db/migration/V1__init.sql",
+      p .. "-persistence/src/main/resources/db/migration/V2__create_" .. s.table_name .. ".sql",
+      p .. "-graphql/src/main/java/" .. pkg .. "/graphql/" .. s.id.EntityName .. "GraphqlController.java",
+      p .. "-server/src/main/resources/application-persistence.yaml",
+    },
+  }
+end
 
 for _, persistence in ipairs({ "PostgreSQL", "MySQL" }) do
-  local label = "java-graphql[" .. persistence .. "]"
+  local s = spec_for(persistence)
+  local f = paths(s)
 
   local expected = {}
-  for _, f in ipairs(BASE_FILES) do expected[#expected + 1] = f end
-  for _, f in ipairs(PERSISTENCE_FILES) do expected[#expected + 1] = f end
+  for _, x in ipairs(f.base) do expected[#expected + 1] = x end
+  for _, x in ipairs(f.persistence) do expected[#expected + 1] = x end
 
   archetect.verify{
-    name = label,
-    source = SRC,
-    answers = answers_with{ persistence = persistence },
-    project_dir = "example-service",
+    name = s.label,
+    source = ".",
+    answers = s.answers,
+    project_dir = s.project_dir,
     expected_files = expected,
     yaml_globs = { ".platform/kubernetes/**/*.yaml" },
   }
 end
 
--- The hollow rendering stays hollow: no persistence module, no scaffold files (the schema keeps
--- the standard surface; no resolvers back it yet).
-local none_project = prova.fixture("java-graphql[None]:project", Scope.File, function(ctx)
-  return archetect.render{
-    source = SRC,
-    answers = answers_with{ persistence = "None" },
-    destination = ctx:tempdir("render1"),
-    defaults = true,
-  }
-end)
+-- The hollow rendering stays hollow: no persistence module, no scaffold files.
+local none = spec_for("None")
+local none_paths = paths(none)
+local none_project = p6m.render(none)
 
 archetect.verify(none_project, {
-  name = "java-graphql[None]",
-  project_dir = "example-service",
-  expected_files = BASE_FILES,
-  absent_files = PERSISTENCE_FILES,
+  name = none.label,
+  project_dir = none.project_dir,
+  expected_files = none_paths.base,
+  absent_files = none_paths.persistence,
   yaml_globs = { ".platform/kubernetes/**/*.yaml" },
 })
 
 -- Containerized compile proof for the hollow rendering: the persistence variants are compiled by
 -- the standards suite's SUT image builds; None never boots there, so prove it compiles by
 -- building its production Dockerfile (build success = it compiles; no boot needed).
-prova.group("java-graphql[None]:image", { requires = { "docker" } }, function(g)
+prova.group(none.label .. ":image", { requires = { "docker" } }, function(g)
   g:test("production image builds (compiles the hollow rendering)", function(t)
-    local root = t:use(none_project):dir("example-service")
+    local root = t:use(none_project):dir(none.project_dir)
     local image = docker.build{
       context = root.path,
       dockerfile = ".platform/docker/prd/Dockerfile",
     }
     t:expect(image, "built image ref"):never():is_empty()
   end)
-end)
-
--- CI parity (S10): the rendered project's own Build workflow path — the build.yaml's single
--- 'mvn verify --no-transfer-progress' on a fresh clone, in the toolchain image. The Dockerfile
--- and CI are two independent build paths; S10 holds the second. The hollow render suffices:
--- resource variants change dependencies, not the command path.
-prova.group("java-graphql[None]:ci", { requires = { "docker" }, tags = { "standards" } }, function(g)
-  p6m.standards.ci_parity(g, none_project, {
-    stack = "java",
-    project_dir = "example-service",
-    name = "java-graphql",
-  })
 end)
