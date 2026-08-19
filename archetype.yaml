@@ -5,7 +5,7 @@ frameworks: ["Spring Boot", "Netflix DGS", "GraphQL"]
 tags: ["graphql", "service", "maven", "dgs"]
 
 requires:
-  archetect: "3.0.0"
+  archetect: "3.4.3"
 
 templating:
   trim_blocks: true
